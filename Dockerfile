@@ -1,52 +1,65 @@
-# Stage 1: Base Node.js image (minimal alpine version)
-FROM node:20-alpine AS base
+# Stage 1: Dependencies
+FROM node:18-alpine AS deps
 WORKDIR /app
 
-# Stage 2: Install dependencies
-FROM base AS deps
-COPY package.json package-lock.json ./
-# Use npm install instead of npm ci for resilience against mismatched lock files
-RUN npm install --legacy-peer-deps
+# Install dependencies based on the preferred package manager
+COPY package.json package-lock.json* ./
+RUN npm ci
 
-# Development stage
-FROM deps AS development
+# Stage 2: Development (with hot reloading)
+FROM node:18-alpine AS development
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-ENV NODE_ENV=development
+
+# Development specific setup
+ENV NODE_ENV development
 ENV NEXT_TELEMETRY_DISABLED 1
-# Explicitly install CSS processing dependencies with peer dependency override
-RUN npm install --save-dev --legacy-peer-deps tailwindcss@latest postcss@latest autoprefixer@latest
+
+# Expose the development port
+EXPOSE 3000
+
+# The command will be overridden in docker-compose for development 
 CMD ["npm", "run", "dev"]
 
 # Stage 3: Build the application
-FROM deps AS builder
-COPY . .
-# Set environment variables
-ENV NEXT_TELEMETRY_DISABLED 1
-RUN npm run build
+FROM node:18-alpine AS builder
+WORKDIR /app
 
-# Stage 4: Production image
-FROM base AS runner
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+# Set environment variables
 ENV NODE_ENV production
 ENV NEXT_TELEMETRY_DISABLED 1
 
-# Create a non-root user
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+# Build the application
+RUN npm run build
 
-# Set the correct permission for prerender cache
-RUN mkdir .next && \
-    chown nextjs:nodejs .next
+# Stage 4: Production runtime
+FROM node:18-alpine AS runner
+WORKDIR /app
 
-# Copy necessary files from builder
+ENV NODE_ENV production
+ENV NEXT_TELEMETRY_DISABLED 1
+
+# Create a non-root user to run the app
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+# Copy necessary files from the builder stage
+COPY --from=builder /app/next.config.js ./
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/package.json ./package.json
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
-# Switch to non-root user
+# Switch to the non-root user
 USER nextjs
 
-# Expose the port the app will run on
+# Expose the production port
 EXPOSE 3000
 
-# Define the command to run the app
+# Start the Next.js application
 CMD ["node", "server.js"]
