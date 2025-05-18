@@ -1,0 +1,58 @@
+services:
+  # Development configuration
+  nextjs-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development # Use development stage with proper setup
+    command: sh -c "npm install --legacy-peer-deps tailwindcss postcss autoprefixer && npm run dev"
+    container_name: nextjs_app_dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    environment:
+      - NODE_ENV=development
+      - MONGODB_URI=mongodb://mongo_db:27017/nextjs_mongodb_dev # Container uses internal network
+      - NEXTAUTH_SECRET=supersecretkeyyoushouldchangethisinproduction
+      - NEXTAUTH_URL=http://localhost:3000
+    depends_on:
+      - mongo_db
+    profiles: ["dev"]
+    restart: unless-stopped
+    
+  # Production configuration
+  nextjs-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runner # Use the final stage for production
+    container_name: nextjs_app_prod
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URI=mongodb://mongo_db:27017/nextjs_mongodb_prod
+      - NEXTAUTH_SECRET=supersecretkeyyoushouldchangethisinproduction
+      - NEXTAUTH_URL=http://localhost:3000
+    depends_on:
+      - mongo_db
+    profiles: ["prod"]
+    restart: unless-stopped
+
+  mongo_db:
+    image: mongodb/mongodb-community-server:latest # Ensures ARM64 compatibility
+    container_name: mongo_db_dev
+    ports:
+      - "27018:27017" # Map to 27018 on host to avoid conflict with local MongoDB
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      - MONGO_INITDB_DATABASE=nextjs_mongodb_dev
+    restart: unless-stopped
+
+volumes:
+  mongodb_data:
+    driver: local
